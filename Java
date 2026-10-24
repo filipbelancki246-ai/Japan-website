@@ -1,0 +1,192 @@
+/* Shining Dining — расширение (только фронтенд): защита от XSS, menu.json, категории/бейджи/описания,
+   акции и промокоды, контакты, заказ в Telegram. Подключается ОДНОЙ строкой, см. SETUP.md */
+(function(){
+"use strict";
+
+/* ======== НАСТРОЙКИ: контакты ======== */
+var CONFIG={
+  CONTACT:{
+    phone:'+82 10-0000-0000',
+    email:'hello@shiningdining.example',
+    telegram:'Ordison',
+    address:'Seoul, Gangnam-gu, Teheran-ro 000',
+    hours:'10:00 – 22:00'
+  }
+};
+var _get=Storage.prototype.getItem,_set=Storage.prototype.setItem;
+function $(id){return document.getElementById(id)}
+function rd(k,d){try{var v=_get.call(LS,k);return v?JSON.parse(v):d}catch(e){return d}}
+function wr(k,v){try{_set.call(LS,k,JSON.stringify(v))}catch(e){}}
+function lang(){return (document.documentElement.lang||'ru').slice(0,2)}
+
+/* ======== 1. Защита от XSS: чистим меню при каждом чтении ======== */
+function esc(s){return String(s==null?'':s).replace(/[<>"']/g,function(c){return{'<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+function cleanList(a){return (Array.isArray(a)?a:[]).map(function(i){
+  var img=String(i.img||'');
+  return{id:esc(i.id),kor:esc(i.kor),key:esc(i.key),customName:i.customName?esc(i.customName):undefined,
+    price:Number(i.price)||0,img:/^(https?:\/\/|data:image\/)/i.test(img)?esc(img):''}})}
+Storage.prototype.getItem=function(k){
+  var v=_get.call(this,k);
+  if(this===LS&&k==='sd_food_items'&&v){try{return JSON.stringify(cleanList(JSON.parse(v)))}catch(e){return null}}
+  return v};
+
+/* ======== Тексты ======== */
+var X={
+ru:{all:'Все',hot:'Горячее',sushi:'Суши',soup:'Супы',rice:'Рис и боксы',other:'Другое',hit:'Хит',new:'Новинка',spicy:'Острое',vegan:'Веган',pe:'PROMOTIONS',pt:'Акции и промокоды',ph:'Нажмите на карточку, чтобы применить код',cp:'Код выбран',pph:'Промокод',pap:'Применить',pok:'Промокод применён',pbad:'Промокод не найден',pd:'Скидка',pf:'К оплате',ct:'Контакты',cph:'Телефон',cem:'Почта',cad:'Адрес',chr:'Часы работы',ctg:'Telegram',tgs:'Отправить заказ в Telegram'},
+uk:{all:'Усі',hot:'Гаряче',sushi:'Суші',soup:'Супи',rice:'Рис і бокси',other:'Інше',hit:'Хіт',new:'Новинка',spicy:'Гостре',vegan:'Веган',pe:'PROMOTIONS',pt:'Акції та промокоди',ph:'Натисніть на картку, щоб застосувати код',cp:'Код обрано',pph:'Промокод',pap:'Застосувати',pok:'Промокод застосовано',pbad:'Промокод не знайдено',pd:'Знижка',pf:'До сплати',ct:'Контакти',cph:'Телефон',cem:'Пошта',cad:'Адреса',chr:'Години роботи',ctg:'Telegram',tgs:'Надіслати замовлення в Telegram'},
+en:{all:'All',hot:'Hot dishes',sushi:'Sushi',soup:'Soups',rice:'Rice & boxes',other:'Other',hit:'Popular',new:'New',spicy:'Spicy',vegan:'Vegan',pe:'PROMOTIONS',pt:'Promotions & promo codes',ph:'Tap a card to use its code',cp:'Code selected',pph:'Promo code',pap:'Apply',pok:'Promo code applied',pbad:'Promo code not found',pd:'Discount',pf:'To pay',ct:'Contacts',cph:'Phone',cem:'Email',cad:'Address',chr:'Opening hours',ctg:'Telegram',tgs:'Send order via Telegram'},
+ja:{all:'すべて',hot:'温かい料理',sushi:'寿司',soup:'スープ',rice:'ご飯・弁当',other:'その他',hit:'人気',new:'新作',spicy:'辛口',vegan:'ヴィーガン',pe:'PROMOTIONS',pt:'キャンペーンとプロモコード',ph:'カードをタップしてコードを使用',cp:'コードを選択しました',pph:'プロモコード',pap:'適用',pok:'プロモコードを適用しました',pbad:'コードが見つかりません',pd:'割引',pf:'お支払い額',ct:'お問い合わせ',cph:'電話',cem:'メール',cad:'住所',chr:'営業時間',ctg:'Telegram',tgs:'Telegramで注文を送信'}};
+function t(k){return (X[lang()]||X.ru)[k]||X.en[k]||k}
+function L(o){return typeof o==='string'?o:(o&&(o[lang()]||o.en||o.ru))||''}
+function f(n){var l={ru:'ru-RU',uk:'uk-UA',en:'en-US',ja:'ja-JP'}[lang()]||'en-US';try{return Number(n).toLocaleString(l)+' ₩'}catch(e){return n+' ₩'}}
+function toast(m){var s=$('toast-stack'),e=document.createElement('div');e.className='toast';e.innerHTML='<span class="dot"></span><span></span>';e.lastChild.textContent=m;s.appendChild(e);
+  requestAnimationFrame(function(){e.classList.add('show')});setTimeout(function(){e.classList.remove('show');setTimeout(function(){e.remove()},400)},2800)}
+
+/* ======== Данные: категории, бейджи, описания, акции ======== */
+var DM={ // метаданные стандартных блюд (проверьте бейджи — они ориентировочные)
+ steak:{c:'hot',b:['hit'],d:{ru:'Сочный стейк на гриле с овощами',en:'Juicy grilled steak with vegetables'}},
+ ramen:{c:'soup',b:['spicy'],d:{ru:'Насыщенный бульон, лапша и топпинги',en:'Rich broth, noodles and toppings'}},
+ sushi:{c:'sushi',b:['new'],d:{ru:'Ассорти свежих суши от шефа',en:"Chef's assortment of fresh sushi"}},
+ bibimbap:{c:'rice',b:[],d:{ru:'Рис с овощами, мясом и пастой кочудян',en:'Rice with vegetables, meat and gochujang'}},
+ mushroom:{c:'hot',b:['vegan'],d:{ru:'Грибы с дымным ароматом углей',en:'Mushrooms with a smoky charcoal aroma'}},
+ bento:{c:'rice',b:['hit'],d:{ru:'Сбалансированный обед в боксе',en:'A balanced lunch in a box'}}};
+var NM={steak:'Стейк на гриле',ramen:'Рамен',sushi:'Свежие суши',bibimbap:'Бибимбап',mushroom:'Грибы на углях',bento:'Бенто-бокс'};
+var PROMOS=[
+ {code:'WELCOME10',pct:10,t:{ru:'−10% на первый заказ',en:'10% off your first order'},d:{ru:'Для новых гостей. Введите код в корзине.',en:'For new guests. Enter the code in your cart.'}},
+ {code:'LUNCH15',pct:15,t:{ru:'−15% на бенто-боксы',en:'15% off bento boxes'},d:{ru:'Обеденное предложение. Введите код в корзине.',en:'Lunch offer. Enter the code in your cart.'}}];
+function meta(id){return rd('sd_meta',{})[id]||DM[id]||{c:'other',b:[],d:''}}
+
+/* ======== Стили ======== */
+var st=document.createElement('style');
+st.textContent='#sd-cats{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 22px}.sd-chip{border:1px solid rgba(127,154,79,.4);background:var(--surface);color:var(--text);padding:8px 16px;border-radius:22px;font-weight:700;font-size:13px;cursor:pointer}.sd-chip.on{background:var(--green);color:#fff;border-color:var(--green)}'+
+'.sd-badges{position:absolute;top:10px;left:10px;display:flex;gap:6px;flex-wrap:wrap;z-index:1}.sd-badge{background:#262626;color:#fff;font-size:11px;font-weight:700;padding:4px 9px;border-radius:12px}.sd-badge.hit{background:#c8553d}.sd-badge.new{background:var(--green)}.sd-badge.spicy{background:#d9822b}.sd-badge.vegan{background:#4f8a4b}'+
+'.sd-desc{color:var(--muted);font-size:12.5px;line-height:1.5;margin:8px 0 0}'+
+'.sd-promos{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:20px}.sd-promo-card{background:var(--surface);border:2px dashed rgba(127,154,79,.5);border-radius:16px;padding:24px;cursor:pointer;transition:transform .25s var(--ease)}.sd-promo-card:hover{transform:translateY(-4px)}.sd-pct{font-family:"Playfair Display",serif;font-size:44px;color:var(--green);font-weight:700}.sd-promo-card h4{margin:6px 0}.sd-promo-card p{color:var(--muted);font-size:13px;line-height:1.5}.sd-code{display:inline-block;margin-top:8px;padding:6px 12px;border-radius:8px;background:rgba(127,154,79,.15);font-family:monospace;font-weight:700;letter-spacing:1px}'+
+'.sd-contacts{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:18px;margin-top:20px}.sd-ct{background:var(--surface);border-radius:14px;padding:20px;box-shadow:var(--shadow)}.sd-ct small{display:block;color:var(--green);font-weight:700;letter-spacing:1px;font-size:12px;margin-bottom:8px}.sd-ct a{text-decoration:none;font-weight:700}'+
+'#sd-promo{margin-bottom:14px}.sd-prow{display:flex;gap:8px}.sd-prow input{flex:1;min-width:0;padding:10px 12px;border-radius:10px;border:1px solid rgba(0,0,0,.12);background:var(--bg);color:var(--text);text-transform:uppercase;font-family:inherit}.sd-prow button{background:var(--accent);color:#fff;border:0;border-radius:10px;padding:0 14px;font-weight:700;cursor:pointer}#sd-pmsg{font-size:12.5px;color:var(--green);margin-top:6px}.sd-line{display:flex;justify-content:space-between;font-size:13px;padding:4px 0;color:var(--muted)}.sd-line.b{font-weight:700;color:var(--text);font-size:15px}';
+document.head.appendChild(st);
+
+/* ======== 3. Меню: категории, бейджи, описания ======== */
+var grid=$('food-grid'),filter='all',bar=document.createElement('div');
+bar.id='sd-cats';grid.parentNode.insertBefore(bar,grid);
+function applyFilter(){grid.querySelectorAll('figure.food').forEach(function(x){x.style.display=(filter==='all'||x.dataset.cat===filter)?'':'none'})}
+function renderBar(){
+  var present={};grid.querySelectorAll('figure.food').forEach(function(x){present[x.dataset.cat]=1});
+  var cats=['all'].concat(['hot','sushi','soup','rice','other'].filter(function(c){return present[c]}));
+  if(cats.indexOf(filter)<0)filter='all';
+  bar.innerHTML='';if(cats.length<3)return;
+  cats.forEach(function(c){var b=document.createElement('button');b.type='button';b.className='sd-chip'+(c===filter?' on':'');b.textContent=t(c);
+    b.onclick=function(){filter=c;renderBar();applyFilter()};bar.appendChild(b)})}
+function decorate(){
+  grid.querySelectorAll('figure.food').forEach(function(x){
+    var b=x.querySelector('[data-add]');if(!b||x.querySelector('.sd-desc'))return;
+    var m=meta(b.getAttribute('data-add'));x.dataset.cat=m.c||'other';
+    if(m.b&&m.b.length){var w=document.createElement('div');w.className='sd-badges';
+      m.b.forEach(function(k){var s=document.createElement('span');s.className='sd-badge '+k;s.textContent=t(k);w.appendChild(s)});
+      x.querySelector('.imgwrap').appendChild(w)}
+    var d=L(m.d);if(d){var p=document.createElement('p');p.className='sd-desc';p.textContent=d;x.querySelector('.korean').insertAdjacentElement('afterend',p)}
+  });renderBar();applyFilter()}
+new MutationObserver(decorate).observe(grid,{childList:true});
+
+/* поля категории/описания/бейджей в админке */
+var pending=null,af=$('admin-food-form');
+if(af){
+  var h='<div class="field"><label>Категория</label><select id="admin-cat"><option value="hot">Горячее</option><option value="sushi">Суши</option><option value="soup">Супы</option><option value="rice">Рис и боксы</option><option value="other">Другое</option></select></div>'+
+   '<div class="field"><label>Описание</label><input id="admin-desc" type="text" placeholder="Коротко о блюде"></div>'+
+   '<div class="field"><label>Бейджи</label><div style="display:flex;gap:12px;flex-wrap:wrap;font-size:13px">'+
+   ['hit:Хит','new:Новинка','spicy:Острое','vegan:Веган'].map(function(s){s=s.split(':');return '<label style="display:flex;gap:5px;align-items:center;margin:0"><input type="checkbox" class="sd-bx" value="'+s[0]+'" style="width:auto"> '+s[1]+'</label>'}).join('')+'</div></div>';
+  af.querySelector('button[type=submit]').insertAdjacentHTML('beforebegin',h);
+  af.addEventListener('submit',function(){pending={c:$('admin-cat').value,d:$('admin-desc').value.trim(),b:[].map.call(af.querySelectorAll('.sd-bx:checked'),function(x){return x.value})}});
+}
+Storage.prototype.setItem=function(k,v){
+  _set.call(this,k,v);
+  if(this!==LS||k!=='sd_food_items')return;
+  try{var ms=rd('sd_meta',{}),ch=false;
+    JSON.parse(v).forEach(function(i){if(!ms[i.id]&&!DM[i.id]&&pending){ms[i.id]=pending;pending=null;ch=true}});
+    if(ch)wr('sd_meta',ms)}catch(e){}
+  if($('admin-panel').classList.contains('show'))wr('sd_dirty',1)};
+
+/* ======== 2. menu.json: общее меню без сервера ======== */
+function exportMenu(){
+  var d={items:cleanList(rd('sd_food_items',[])),meta:rd('sd_meta',{}),promos:PROMOS},a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([JSON.stringify(d,null,2)],{type:'application/json'}));a.download='menu.json';a.click();
+  try{LS.removeItem('sd_dirty')}catch(e){}toast('menu.json скачан — загрузите его на хостинг рядом с index.html')}
+$('admin-food-list').insertAdjacentHTML('afterend','<button class="primary-btn" id="sd-export" type="button" style="margin-top:14px">⬇ Скачать menu.json</button><div class="admin-note">Загрузите скачанный файл на хостинг рядом с index.html — так новое меню и акции увидят все посетители.</div>');
+$('sd-export').onclick=exportMenu;
+function pull(){
+  fetch('menu.json',{cache:'no-cache'}).then(function(r){if(!r.ok)throw 0;return r.json()}).then(function(m){
+    if(Array.isArray(m.promos)){PROMOS=m.promos;renderPromos();updatePromoUI()}
+    if(Array.isArray(m.items)&&!rd('sd_dirty',0)){
+      var same=JSON.stringify(cleanList(m.items))===JSON.stringify(cleanList(rd('sd_food_items',[])))&&JSON.stringify(m.meta||{})===JSON.stringify(rd('sd_meta',{}));
+      if(!same){wr('sd_food_items',m.items);wr('sd_meta',m.meta||{});
+        if(!sessionStorage.getItem('sd_rl')){sessionStorage.setItem('sd_rl','1');location.reload()}}}
+  }).catch(function(){})}
+
+/* ======== 4. Акции и промокоды ======== */
+var ps=document.createElement('section');ps.className='gallery';ps.id='promos';
+ps.innerHTML='<div class="container"><div class="title"><div><h3 id="sd-pe"></h3><h2 id="sd-pt"></h2></div><div style="color:var(--muted)" id="sd-ph"></div></div><div class="sd-promos" id="sd-promos"></div></div>';
+$('menu').insertAdjacentElement('afterend',ps);
+var pr=document.createElement('div');pr.id='sd-promo';
+pr.innerHTML='<div class="sd-prow"><input id="sd-pin" type="text" autocomplete="off"><button id="sd-pbtn" type="button"></button></div><div id="sd-pmsg"></div><div id="sd-pcalc"></div>';
+$('cart-foot').insertBefore(pr,$('btn-checkout'));
+
+function activePromo(){var c=String(rd('sd_promo','')).toUpperCase();return c?PROMOS.filter(function(p){return String(p.code).toUpperCase()===c})[0]||null:null}
+function calc(){
+  var items=cleanList(rd('sd_food_items',[])),cart=rd('sd_cart',{}),sum=0,list=[];
+  Object.keys(cart).forEach(function(id){var it=items.filter(function(i){return i.id===id})[0];if(!it)return;sum+=it.price*cart[id];list.push({id:id,name:it.customName||NM[id]||id,qty:cart[id],price:it.price})});
+  var p=activePromo(),disc=p?Math.round(sum*p.pct/100):0;return{list:list,sum:sum,p:p,disc:disc}}
+function line(a,b,bold){var d=document.createElement('div');d.className='sd-line'+(bold?' b':'');d.innerHTML='<span></span><span></span>';d.children[0].textContent=a;d.children[1].textContent=b;return d}
+function updatePromoUI(){
+  var c=calc(),m=$('sd-pmsg'),k=$('sd-pcalc');$('sd-pin').placeholder=t('pph');$('sd-pbtn').textContent=t('pap');k.innerHTML='';
+  if(c.p){m.textContent='✓ '+t('pok')+': '+c.p.code+' (−'+c.p.pct+'%)';if(c.sum>0){k.appendChild(line(t('pd'),'−'+f(c.disc)));k.appendChild(line(t('pf'),f(c.sum-c.disc),true))}}
+  else m.textContent=''}
+function renderPromos(){
+  $('sd-pe').textContent=t('pe');$('sd-pt').textContent=t('pt');$('sd-ph').textContent=t('ph');
+  var box=$('sd-promos');box.innerHTML='';
+  PROMOS.forEach(function(p){var d=document.createElement('div');d.className='sd-promo-card';d.innerHTML='<div class="sd-pct"></div><h4></h4><p></p><span class="sd-code"></span>';
+    d.querySelector('.sd-pct').textContent='−'+p.pct+'%';d.querySelector('h4').textContent=L(p.t);d.querySelector('p').textContent=L(p.d);d.querySelector('.sd-code').textContent=p.code;
+    d.onclick=function(){$('sd-pin').value=p.code;$('sd-pbtn').click()};box.appendChild(d)})}
+$('sd-pbtn').onclick=function(){
+  var v=$('sd-pin').value.trim().toUpperCase();
+  if(!v){wr('sd_promo','');updatePromoUI();return}
+  var p=PROMOS.filter(function(x){return String(x.code).toUpperCase()===v})[0];
+  if(!p){toast(t('pbad'));return}
+  wr('sd_promo',p.code);updatePromoUI();toast(t('cp')+': '+p.code)};
+new MutationObserver(updatePromoUI).observe($('cart-total'),{childList:true,characterData:true,subtree:true});
+new MutationObserver(function(){
+  var s=$('co-summary');if(s.querySelector('.sd-co'))return;var c=calc();if(!c.p)return;
+  var d=document.createElement('div');d.className='sd-co';d.appendChild(line(t('pd')+' '+c.p.code,'−'+f(c.disc)));d.appendChild(line(t('pf'),f(c.sum-c.disc),true));s.appendChild(d)
+}).observe($('co-summary'),{childList:true});
+
+/* ======== 5. Контакты ======== */
+var cs=document.createElement('section');cs.className='container';cs.id='contacts';cs.style.padding='70px 24px 30px';
+cs.innerHTML='<h2 id="sd-ct-t" style="font-family:\'Playfair Display\',serif;font-size:36px;margin:0"></h2><div class="sd-contacts" id="sd-ct"></div>';
+document.querySelector('footer.site-footer').insertAdjacentElement('beforebegin',cs);
+function renderContacts(){
+  var K=C.CONTACT,box=$('sd-ct');$('sd-ct-t').textContent=t('ct');box.innerHTML='';
+  [['cph',K.phone,'tel:'+String(K.phone).replace(/[^+\d]/g,'')],['cem',K.email,'mailto:'+K.email],['ctg','@'+K.telegram,'https://t.me/'+K.telegram],['cad',K.address,''],['chr',K.hours,'']].forEach(function(r){
+    if(!r[1])return;var d=document.createElement('div');d.className='sd-ct';d.innerHTML='<small></small><div></div>';d.children[0].textContent=t(r[0]);
+    var v=d.children[1];if(r[2]){var a=document.createElement('a');a.href=r[2];if(r[2].indexOf('http')===0){a.target='_blank';a.rel='noopener noreferrer'}a.textContent=r[1];v.appendChild(a)}else v.textContent=r[1];box.appendChild(d)})}
+function go(id){return function(e){e.preventDefault();e.stopImmediatePropagation();$('mobile-menu').classList.remove('show');var el=$(id);if(el)el.scrollIntoView({behavior:'smooth'})}}
+[['nav-event','promos'],['nav-event-m','promos'],['nav-support','contacts'],['nav-support-m','contacts'],['franchise-cta','contacts']].forEach(function(p){$(p[0]).addEventListener('click',go(p[1]),true)});
+document.querySelector('.contact-btn').addEventListener('click',go('contacts'),true);
+
+/* ======== Заказ в Telegram (кнопка на странице успеха) ======== */
+var snap=null,sent='',tg=document.createElement('a');
+tg.className='primary-btn';tg.target='_blank';tg.rel='noopener noreferrer';tg.style.cssText='display:none;text-align:center;text-decoration:none;margin-bottom:10px';
+$('co-finish').insertAdjacentElement('beforebegin',tg);
+$('form-checkout-payment').addEventListener('submit',function(){
+  var c=calc();snap={items:c.list,total:c.sum-c.disc,promo:c.p?c.p.code:null,
+    name:$('co-name').value.trim(),phone:$('co-phone').value.trim(),address:$('co-address').value.trim()}});
+new MutationObserver(function(){
+  var m=($('order-number').textContent||'').match(/SD-\d+/);
+  if(!m||!snap||m[0]===sent)return;sent=m[0];
+  var txt='🆕 Заказ '+m[0]+'\n'+snap.items.map(function(i){return '• '+i.name+' × '+i.qty}).join('\n')+'\n\nИтого: '+snap.total+' ₩'+(snap.promo?' (промокод '+snap.promo+')':'')+'\n'+snap.name+', '+snap.phone+'\n'+snap.address;
+  tg.href='https://t.me/'+C.CONTACT.telegram+'?text='+encodeURIComponent(txt);tg.textContent='✈️ '+t('tgs');tg.style.display='block';
+  snap=null;wr('sd_promo','');$('sd-pin').value='';updatePromoUI()
+}).observe($('order-number'),{childList:true,characterData:true,subtree:true});
+
+/* ======== Старт ======== */
+new MutationObserver(function(){renderPromos();renderContacts();updatePromoUI();decorate()}).observe(document.documentElement,{attributes:true,attributeFilter:['lang']});
+renderPromos();renderContacts();updatePromoUI();pull();
+})();
