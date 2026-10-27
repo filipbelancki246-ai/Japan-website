@@ -1,0 +1,15 @@
+shining-dining/
+├── index.html              ← сюда положите ваш сайт (в архиве его нет)
+├── sd-extras.js
+├── sw.js
+├── manifest.webmanifest
+├── icon.svg
+├── images/                 # ваши фото блюд
+├── docs/
+│   ├── SETUP.md
+│   ├── SEO-head.html
+│   └── screenshots/        # скриншоты для README
+├── .nojekyll, .gitignore, .editorconfig
+├── LICENSE
+└── README.md
+
